@@ -154,6 +154,47 @@ class Toolbox(object):
         self.tools = [FindSimilarTerrain]
 
 
+RANK_COLORS = [(230, 25, 75), (0, 130, 200), (60, 180, 75), (245, 130, 48), (145, 30, 180),
+               (70, 240, 240), (240, 50, 230), (210, 245, 60), (0, 128, 128), (170, 110, 40),
+               (128, 0, 0), (0, 0, 128)]
+
+
+def make_rank_symbology(fc, transparency=50, aprx=None):
+    """Build a .lyrx that colours every polygon by Rank (unique colour each, listed by Rank)
+    at ~50% transparency. Returns the .lyrx path, or None if no ArcGIS Pro project is open."""
+    try:
+        if aprx is None:
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+        mp = aprx.activeMap or aprx.listMaps()[0]
+        lyr = mp.addDataFromPath(fc)
+        try:
+            sym = lyr.symbology
+            sym.updateRenderer("UniqueValueRenderer")
+            sym.renderer.fields = ["Rank"]
+            for item in sym.renderer.groups[0].items:
+                try:
+                    k = int(float(item.values[0][0]))
+                except Exception:
+                    continue
+                r, g, b = RANK_COLORS[(k - 1) % len(RANK_COLORS)]
+                item.symbol.color = {"RGB": [r, g, b, 100]}
+                item.symbol.outlineColor = {"RGB": [r, g, b, 100]}
+                item.symbol.size = 1.5
+                item.label = "Rank %d" % k
+            lyr.symbology = sym
+            lyr.transparency = transparency
+            lyr.name = os.path.basename(fc)
+            out = os.path.join(arcpy.env.scratchFolder, "similar_terrain_ranks.lyrx")
+            lyr.saveACopy(out)
+        finally:
+            mp.removeLayer(lyr)
+        return out
+    except Exception as e:  # not running inside Pro, or symbology unavailable
+        arcpy.AddMessage("Layer symbology not applied (%s)." % e)
+        return None
+
+
+
 class FindSimilarTerrain(object):
     def __init__(self):
         self.label = "Find Similar Terrain"
@@ -352,6 +393,10 @@ class FindSimilarTerrain(object):
                 cur.insertRow([poly, m.rank, m.rmse, m.offset, m.angle, m.final_cs * mpu,
                                m.search_cs * mpu, m.coarse_rmse,
                                ("exhaustive" if exhaustive else "coarse-to-fine")[:255]])
+
+        lyrx = make_rank_symbology(fc)
+        if lyrx:
+            p[5].symbology = lyrx
 
         # ---- optional residual raster for the best match -------------------
         if p[13].value and good:
